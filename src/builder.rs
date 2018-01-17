@@ -5,6 +5,9 @@ use metriqs::db::{Db, DbOptions};
 use super::config::{
     Config,
     Db as DbConfig,
+    Recv as RecvConfig,
+    Statsd as StatsdConfig,
+    StatsdTcp as StatsdTcpConfig
 };
 use super::util::f64_to_duration;
 
@@ -21,18 +24,22 @@ trait Builder<T> {
     fn build(&self) -> T;
 }
 
+#[derive(Debug)]
 pub struct RootBuilder {
     db: DbBuilder,
+    recv: RecvBuilder,
 }
 
 impl From<Config> for RootBuilder {
     fn from(config: Config) -> RootBuilder {
         RootBuilder {
             db: config.db.into(),
+            recv: config.recv.into(),
         }
     }
 }
 
+#[derive(Debug)]
 pub struct DbBuilder {
     aggregation_interval: Option<Duration>,
 }
@@ -53,3 +60,60 @@ impl Builder<Db> for DbBuilder {
     }
 }
 
+#[derive(Debug)]
+pub struct RecvBuilder {
+    kinds: Vec<RecvKind>,
+}
+
+impl RecvBuilder {
+    /// Convenience function to convert a config `Option` to a
+    /// `Vec<RecvKind>` via its `Into` trait.
+    fn config_to_kinds<T: Into<Vec<RecvKind>>>(config: Option<T>) -> Vec<RecvKind> {
+        match config {
+            Some(config) => Into::into(config),
+            None => vec![],
+        }
+    }
+}
+
+impl From<Option<RecvConfig>> for RecvBuilder {
+    fn from(config: Option<RecvConfig>) -> RecvBuilder {
+        let mut kinds = vec![];
+        if let Some(config) = config {
+            kinds.extend(RecvBuilder::config_to_kinds(config.statsd))
+        }
+        RecvBuilder {
+            kinds,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum RecvKind {
+    StatsdTcp(StatsdTcpBuilder),
+}
+
+impl From<StatsdConfig> for Vec<RecvKind> {
+    fn from(config: StatsdConfig) -> Vec<RecvKind> {
+        let mut kinds: Vec<RecvKind> = vec![];
+        if let Some(tcps) = config.tcp {
+            for tcp in tcps {
+                kinds.push(RecvKind::StatsdTcp(tcp.into()))
+            }
+        }
+        kinds
+    }
+}
+
+#[derive(Debug)]
+pub struct StatsdTcpBuilder {
+    port: Option<u16>,
+}
+
+impl From<StatsdTcpConfig> for StatsdTcpBuilder {
+    fn from(config: StatsdTcpConfig) -> StatsdTcpBuilder {
+        StatsdTcpBuilder {
+            port: config.port,
+        }
+    }
+}
