@@ -12,7 +12,7 @@ use super::config::{
     Statsd as StatsdConfig,
     StatsdTcp as StatsdTcpConfig
 };
-use super::runner::{Runnable, RunnableBox, Runner};
+use super::runner::{Runnable, Runner};
 use super::util::f64_to_duration;
 
 macro_rules! option {
@@ -60,9 +60,10 @@ impl RootBuilder {
         ctxt.db = Some(db);
 
         // Build metrics receivers (aka. `recv` internally).
-        self.recv.build(&ctxt);
+        let recv = self.recv.build(&ctxt);
 
-        Runner::new(ctxt.db.unwrap())
+        // Pull the database out of the context and pass it to the runner.
+        Runner::new(ctxt.db.unwrap(), recv)
     }
 }
 
@@ -98,14 +99,14 @@ impl Builder<Db> for DbBuilder {
 
 #[derive(Debug)]
 pub struct RecvBuilder {
-    kinds: Vec<RecvKind>,
+    kinds: Vec<RecvBuilderKind>,
 }
 
 impl RecvBuilder {
     /// Convenience function to convert a config `Option` to a
-    /// `Vec<RecvKind>` via its `From` trait.
-    fn config_to_kinds<T>(config: Option<T>) -> Vec<RecvKind>
-        where Vec<RecvKind>: From<T>
+    /// `Vec<RecvBuilderKind>` via its `From` trait.
+    fn config_to_kinds<T>(config: Option<T>) -> Vec<RecvBuilderKind>
+        where Vec<RecvBuilderKind>: From<T>
     {
         match config {
             Some(config) => From::from(config),
@@ -126,8 +127,8 @@ impl From<Option<RecvConfig>> for RecvBuilder {
     }
 }
 
-impl Builder<Vec<RunnableBox>> for RecvBuilder {
-    fn build(&self, ctxt: &BuildContext) -> Vec<RunnableBox> {
+impl Builder<Vec<RecvRunnerKind>> for RecvBuilder {
+    fn build(&self, ctxt: &BuildContext) -> Vec<RecvRunnerKind> {
         self.kinds.iter()
             .map(|kind| kind.build(&ctxt))
             .collect()
@@ -135,28 +136,28 @@ impl Builder<Vec<RunnableBox>> for RecvBuilder {
 }
 
 #[derive(Debug)]
-pub enum RecvKind {
+pub enum RecvBuilderKind {
     StatsdTcp(StatsdTcpBuilder),
 }
 
-impl From<StatsdConfig> for Vec<RecvKind> {
-    fn from(config: StatsdConfig) -> Vec<RecvKind> {
-        let mut kinds: Vec<RecvKind> = vec![];
+impl From<StatsdConfig> for Vec<RecvBuilderKind> {
+    fn from(config: StatsdConfig) -> Vec<RecvBuilderKind> {
+        let mut kinds: Vec<RecvBuilderKind> = vec![];
         if let Some(tcps) = config.tcp {
             for tcp in tcps {
-                kinds.push(RecvKind::StatsdTcp(tcp.into()))
+                kinds.push(RecvBuilderKind::StatsdTcp(tcp.into()))
             }
         }
         kinds
     }
 }
 
-impl Builder<RunnableBox> for RecvKind {
-    fn build(&self, ctxt: &BuildContext) -> RunnableBox {
-        use self::RecvKind::*;
+impl Builder<RecvRunnerKind> for RecvBuilderKind {
+    fn build(&self, ctxt: &BuildContext) -> RecvRunnerKind {
+        use self::RecvBuilderKind::*;
 
         match self {
-            &StatsdTcp(ref builder) => builder.build(&ctxt),
+            &StatsdTcp(ref builder) => RecvRunnerKind::StatsdTcp(builder.build(&ctxt)),
         }
     }
 }
@@ -174,8 +175,8 @@ impl From<StatsdTcpConfig> for StatsdTcpBuilder {
     }
 }
 
-impl Builder<RunnableBox> for StatsdTcpBuilder {
-    fn build(&self, ctxt: &BuildContext) -> RunnableBox {
+impl Builder<StatsdTcpListener> for StatsdTcpBuilder {
+    fn build(&self, ctxt: &BuildContext) -> StatsdTcpListener {
         let collector = ctxt.collector();
 
         let port = match self.port {
@@ -184,12 +185,20 @@ impl Builder<RunnableBox> for StatsdTcpBuilder {
         };
         let addr = (Ipv4Addr::new(0, 0, 0, 0), port);
 
-        Box::new(StatsdTcpListener::new(collector, addr).unwrap())
+        StatsdTcpListener::new(collector, addr).unwrap()
     }
 }
 
-impl Runnable for StatsdTcpListener {
+pub enum RecvRunnerKind {
+    StatsdTcp(StatsdTcpListener),
+}
+
+impl Runnable for RecvRunnerKind {
     fn run(&mut self) {
-        self.listen()
+        use self::RecvRunnerKind::*;
+
+        match self {
+            &mut StatsdTcp(ref mut listener) => listener.listen(),
+        }
     }
 }
