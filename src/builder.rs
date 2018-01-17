@@ -1,6 +1,10 @@
+use std::io;
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use metriqs::db::{Db, DbOptions};
+use metriqs::recv::Collector;
+use metriqs::recv::push::statsd::StatsdTcpListener;
 
 use super::config::{
     Config,
@@ -20,14 +24,43 @@ macro_rules! option {
     }
 }
 
+struct BuildContext {
+    db: Option<Db>,
+}
+
+impl BuildContext {
+    fn collector(&self) -> Collector {
+        if let Some(ref db) = self.db {
+            db.collector()
+        } else {
+            panic!("Db not yet available")
+        }
+    }
+}
+
 trait Builder<T> {
-    fn build(&self) -> T;
+    fn build(&self, &BuildContext) -> T;
 }
 
 #[derive(Debug)]
 pub struct RootBuilder {
     db: DbBuilder,
     recv: RecvBuilder,
+}
+
+impl RootBuilder {
+    fn build(&self) -> Db {
+        let mut ctxt = BuildContext {
+            db: None,
+        };
+
+        let db = self.db.build(&ctxt);
+        ctxt.db = Some(db);
+
+        self.recv.build(&ctxt);
+
+        ctxt.db.unwrap()
+    }
 }
 
 impl From<Config> for RootBuilder {
@@ -53,7 +86,7 @@ impl From<Option<DbConfig>> for DbBuilder {
 }
 
 impl Builder<Db> for DbBuilder {
-    fn build(&self) -> Db {
+    fn build(&self, _: &BuildContext) -> Db {
         let mut options: DbOptions = Default::default();
         options.aggregation_interval = self.aggregation_interval;
         Db::new(options)
@@ -90,6 +123,14 @@ impl From<Option<RecvConfig>> for RecvBuilder {
     }
 }
 
+impl Builder<()> for RecvBuilder {
+    fn build(&self, ctxt: &BuildContext) {
+        for kind in self.kinds.iter() {
+            kind.build(&ctxt)
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum RecvKind {
     StatsdTcp(StatsdTcpBuilder),
@@ -107,6 +148,16 @@ impl From<StatsdConfig> for Vec<RecvKind> {
     }
 }
 
+impl Builder<()> for RecvKind {
+    fn build(&self, ctxt: &BuildContext) {
+        use self::RecvKind::*;
+
+        match self {
+            &StatsdTcp(ref builder) => builder.build(&ctxt).unwrap(),
+        };
+    }
+}
+
 #[derive(Debug)]
 pub struct StatsdTcpBuilder {
     port: Option<u16>,
@@ -117,5 +168,19 @@ impl From<StatsdTcpConfig> for StatsdTcpBuilder {
         StatsdTcpBuilder {
             port: config.port,
         }
+    }
+}
+
+impl Builder<Result<StatsdTcpListener, io::Error>> for StatsdTcpBuilder {
+    fn build(&self, ctxt: &BuildContext) -> Result<StatsdTcpListener, io::Error> {
+        let collector = ctxt.collector();
+
+        let port = match self.port {
+            Some(port) => port,
+            None => 8125,
+        };
+        let addr = (Ipv4Addr::new(0, 0, 0, 0), port);
+
+        StatsdTcpListener::new(collector, addr)
     }
 }
