@@ -1,6 +1,12 @@
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    db: Option<Db>,
     recv: Option<Recv>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Db {
+    aggregation_interval: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
