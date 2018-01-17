@@ -67,10 +67,12 @@ pub struct RecvBuilder {
 
 impl RecvBuilder {
     /// Convenience function to convert a config `Option` to a
-    /// `Vec<RecvKind>` via its `Into` trait.
-    fn config_to_kinds<T: Into<Vec<RecvKind>>>(config: Option<T>) -> Vec<RecvKind> {
+    /// `Vec<RecvKind>` via its `From` trait.
+    fn config_to_kinds<T>(config: Option<T>) -> Vec<RecvKind>
+        where Vec<RecvKind>: From<T>
+    {
         match config {
-            Some(config) => Into::into(config),
+            Some(config) => From::from(config),
             None => vec![],
         }
     }
