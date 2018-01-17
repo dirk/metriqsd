@@ -1,4 +1,3 @@
-use std::io;
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
@@ -13,6 +12,7 @@ use super::config::{
     Statsd as StatsdConfig,
     StatsdTcp as StatsdTcpConfig
 };
+use super::runner::{Runnable, RunnableBox, Runner};
 use super::util::f64_to_duration;
 
 macro_rules! option {
@@ -49,17 +49,20 @@ pub struct RootBuilder {
 }
 
 impl RootBuilder {
-    fn build(&self) -> Db {
+    pub fn build(&self) -> Runner {
         let mut ctxt = BuildContext {
             db: None,
         };
 
+        // Set up the `Db` instance from the configuration and save it in the
+        // context so that subsequent builders can use it.
         let db = self.db.build(&ctxt);
         ctxt.db = Some(db);
 
+        // Build metrics receivers (aka. `recv` internally).
         self.recv.build(&ctxt);
 
-        ctxt.db.unwrap()
+        Runner::new(ctxt.db.unwrap())
     }
 }
 
@@ -123,11 +126,11 @@ impl From<Option<RecvConfig>> for RecvBuilder {
     }
 }
 
-impl Builder<()> for RecvBuilder {
-    fn build(&self, ctxt: &BuildContext) {
-        for kind in self.kinds.iter() {
-            kind.build(&ctxt)
-        }
+impl Builder<Vec<RunnableBox>> for RecvBuilder {
+    fn build(&self, ctxt: &BuildContext) -> Vec<RunnableBox> {
+        self.kinds.iter()
+            .map(|kind| kind.build(&ctxt))
+            .collect()
     }
 }
 
@@ -148,13 +151,13 @@ impl From<StatsdConfig> for Vec<RecvKind> {
     }
 }
 
-impl Builder<()> for RecvKind {
-    fn build(&self, ctxt: &BuildContext) {
+impl Builder<RunnableBox> for RecvKind {
+    fn build(&self, ctxt: &BuildContext) -> RunnableBox {
         use self::RecvKind::*;
 
         match self {
-            &StatsdTcp(ref builder) => builder.build(&ctxt).unwrap(),
-        };
+            &StatsdTcp(ref builder) => builder.build(&ctxt),
+        }
     }
 }
 
@@ -171,8 +174,8 @@ impl From<StatsdTcpConfig> for StatsdTcpBuilder {
     }
 }
 
-impl Builder<Result<StatsdTcpListener, io::Error>> for StatsdTcpBuilder {
-    fn build(&self, ctxt: &BuildContext) -> Result<StatsdTcpListener, io::Error> {
+impl Builder<RunnableBox> for StatsdTcpBuilder {
+    fn build(&self, ctxt: &BuildContext) -> RunnableBox {
         let collector = ctxt.collector();
 
         let port = match self.port {
@@ -181,6 +184,12 @@ impl Builder<Result<StatsdTcpListener, io::Error>> for StatsdTcpBuilder {
         };
         let addr = (Ipv4Addr::new(0, 0, 0, 0), port);
 
-        StatsdTcpListener::new(collector, addr)
+        Box::new(StatsdTcpListener::new(collector, addr).unwrap())
+    }
+}
+
+impl Runnable for StatsdTcpListener {
+    fn run(&mut self) {
+        self.listen()
     }
 }
