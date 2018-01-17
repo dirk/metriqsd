@@ -6,6 +6,7 @@ use super::config::{
     Config,
     Db as DbConfig,
 };
+use super::util::f64_to_duration;
 
 macro_rules! option {
     ($config:ident.$property:ident ?: $default:expr) => {
@@ -52,7 +53,3 @@ impl Builder<Db> for DbBuilder {
     }
 }
 
-fn f64_to_duration(value: f64) -> Duration {
-    let millis = (value * 1_000.0).round() as u64;
-    Duration::from_millis(millis)
-}
